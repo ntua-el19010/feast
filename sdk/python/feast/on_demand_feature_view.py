@@ -4,7 +4,7 @@ import inspect
 import warnings
 from datetime import datetime
 from types import FunctionType
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union, Set
 
 import dill
 import pandas as pd
@@ -55,6 +55,8 @@ class OnDemandFeatureView(BaseFeatureView):
         source_request_sources: A map from input source names to the actual input
             sources with type RequestSource.
         feature_transformation: The user defined transformation.
+        feature_dependencies: Dictionary with output features as keys and the list of 
+            input features used in the transformation for their calculation.
         description: A human-readable description.
         tags: A dictionary of key-value pairs to store arbitrary metadata.
         owner: The owner of the on demand feature view, typically the email of the primary
@@ -68,6 +70,7 @@ class OnDemandFeatureView(BaseFeatureView):
     feature_transformation: Union[
         PandasTransformation, PythonTransformation, SubstraitTransformation
     ]
+    feature_dependencies: Dict[str, Set[str]]
     mode: str
     description: str
     tags: Dict[str, str]
@@ -161,6 +164,8 @@ class OnDemandFeatureView(BaseFeatureView):
                 )
 
         self.feature_transformation = feature_transformation
+
+        self.infer_feature_dependencies()
 
     @property
     def proto_class(self) -> Type[OnDemandFeatureViewProto]:
@@ -581,18 +586,34 @@ class OnDemandFeatureView(BaseFeatureView):
 
     @staticmethod
     def get_requested_odfvs(
-        feature_refs, project, registry
+        feature_refs, project, registry, odfvs=[]
     ) -> List["OnDemandFeatureView"]:
-        all_on_demand_feature_views = registry.list_on_demand_feature_views(
+        # print("In get_requested_odfvs")
+        all_on_demand_feature_views_alt = registry.list_on_demand_feature_views(
             project, allow_cache=True
         )
+        all_on_demand_feature_views = odfvs or all_on_demand_feature_views_alt
+        # print(f"All On Demand Feature Views: {all_on_demand_feature_views}")
         requested_on_demand_feature_views: List[OnDemandFeatureView] = []
         for odfv in all_on_demand_feature_views:
             for feature in odfv.features:
                 if f"{odfv.name}:{feature.name}" in feature_refs:
                     requested_on_demand_feature_views.append(odfv)
                     break
+        # print(f"Requested On Demand Feature Views: {requested_on_demand_feature_views}")
         return requested_on_demand_feature_views
+
+    def infer_feature_dependencies(self) -> None:
+        #print("In infer feature dependencies!")
+        inferred_feature_dependencies = None
+        if self.mode == "pandas" or self.mode == "python":
+            inferred_feature_dependencies = self.feature_transformation.infer_feature_dependencies()
+ 
+        # TODO: Map dependencies to Fields from features so that we have a dict {output field name: List[Field]}
+        # Search in the registry for Field with the given name used by one of the sources
+        self.feature_dependencies = inferred_feature_dependencies
+        return
+        
 
 
 def on_demand_feature_view(
